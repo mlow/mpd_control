@@ -16,6 +16,86 @@ struct worker_meta {
 	char* label;
 };
 
+bool
+is_utf8(const char * string)
+{
+    if (!string)
+        return false;
+
+    const unsigned char * bytes = (const unsigned char *)string;
+    while (*bytes) {
+        if( (// ASCII
+             // use bytes[0] <= 0x7F to allow ASCII control characters
+                bytes[0] == 0x09 ||
+                bytes[0] == 0x0A ||
+                bytes[0] == 0x0D ||
+                (0x20 <= bytes[0] && bytes[0] <= 0x7E)
+            )
+        ) {
+            bytes += 1;
+            continue;
+        }
+
+        if( (// non-overlong 2-byte
+                (0xC2 <= bytes[0] && bytes[0] <= 0xDF) &&
+                (0x80 <= bytes[1] && bytes[1] <= 0xBF)
+            )
+        ) {
+            bytes += 2;
+            continue;
+        }
+
+        if( (// excluding overlongs
+                bytes[0] == 0xE0 &&
+                (0xA0 <= bytes[1] && bytes[1] <= 0xBF) &&
+                (0x80 <= bytes[2] && bytes[2] <= 0xBF)
+            ) ||
+            (// straight 3-byte
+                ((0xE1 <= bytes[0] && bytes[0] <= 0xEC) ||
+                    bytes[0] == 0xEE ||
+                    bytes[0] == 0xEF) &&
+                (0x80 <= bytes[1] && bytes[1] <= 0xBF) &&
+                (0x80 <= bytes[2] && bytes[2] <= 0xBF)
+            ) ||
+            (// excluding surrogates
+                bytes[0] == 0xED &&
+                (0x80 <= bytes[1] && bytes[1] <= 0x9F) &&
+                (0x80 <= bytes[2] && bytes[2] <= 0xBF)
+            )
+        ) {
+            bytes += 3;
+            continue;
+        }
+
+        if( (// planes 1-3
+                bytes[0] == 0xF0 &&
+                (0x90 <= bytes[1] && bytes[1] <= 0xBF) &&
+                (0x80 <= bytes[2] && bytes[2] <= 0xBF) &&
+                (0x80 <= bytes[3] && bytes[3] <= 0xBF)
+            ) ||
+            (// planes 4-15
+                (0xF1 <= bytes[0] && bytes[0] <= 0xF3) &&
+                (0x80 <= bytes[1] && bytes[1] <= 0xBF) &&
+                (0x80 <= bytes[2] && bytes[2] <= 0xBF) &&
+                (0x80 <= bytes[3] && bytes[3] <= 0xBF)
+            ) ||
+            (// plane 16
+                bytes[0] == 0xF4 &&
+                (0x80 <= bytes[1] && bytes[1] <= 0x8F) &&
+                (0x80 <= bytes[2] && bytes[2] <= 0xBF) &&
+                (0x80 <= bytes[3] && bytes[3] <= 0xBF)
+            )
+        ) {
+            bytes += 4;
+            continue;
+        }
+
+        return false;
+    }
+
+    return true;
+}
+
 static long long
 current_timestamp() {
 	struct timeval te;
@@ -26,18 +106,36 @@ current_timestamp() {
 static void
 scroll_text(char *text_to_scroll, int text_len, char *buffer, int *index,
 			const int max_length) {
-    if (*index - text_len > 0)
-        *index %= text_len;
+	char last_utf8[5] = { '\0' };
+	do {
+		if (*index - text_len > 0) {
+			*index %= text_len;
+		}
 
-    const int overflow = text_len - *index - max_length;
-    if (overflow <= 0) {
-        memcpy(buffer, &text_to_scroll[*index], text_len-*index);
-        memcpy(&buffer[text_len-*index], text_to_scroll, max_length-(text_len-*index));
-    } else {
-        memcpy(buffer, &text_to_scroll[*index], max_length);
-    }
+		const int overflow = text_len - *index - max_length;
+		if (overflow <= 0) {
+			memcpy(buffer, &text_to_scroll[*index], text_len-*index);
+			memcpy(&buffer[text_len-*index], text_to_scroll, max_length-(text_len-*index));
+		} else {
+			memcpy(buffer, &text_to_scroll[*index], max_length);
+		}
 
+		strcat(last_utf8, &buffer[max_length-1]);
+		if (is_utf8(last_utf8)) {
+			break;
+		}
+		*index += 1;
+	} while(true);
 	buffer[max_length] = '\0';
+
+	char utf8[5] = { '\0' };
+	int i = 0;
+	do {
+		memcpy(utf8, &text_to_scroll[*index], ++i);
+	} while (!is_utf8(utf8));
+	if (strlen(utf8) > 1) {
+		*index += strlen(utf8)-1;
+	}
 }
 
 static int
