@@ -11,6 +11,9 @@
 struct worker_meta {
 	long long update_interval;
 	bool stop;
+	int scroll_length;
+	int scroll_index;
+	char* label;
 };
 
 static long long
@@ -18,6 +21,23 @@ current_timestamp() {
 	struct timeval te;
 	gettimeofday(&te, NULL);
 	return te.tv_sec*1000LL + te.tv_usec/1000;
+}
+
+static void
+scroll_text(char *text_to_scroll, int text_len, char *buffer, int *index,
+			const int max_length) {
+    if (*index - text_len > 0)
+        *index %= text_len;
+
+    const int overflow = text_len - *index - max_length;
+    if (overflow <= 0) {
+        memcpy(buffer, &text_to_scroll[*index], text_len-*index);
+        memcpy(&buffer[text_len-*index], text_to_scroll, max_length-(text_len-*index));
+    } else {
+        memcpy(buffer, &text_to_scroll[*index], max_length);
+    }
+
+	buffer[max_length] = '\0';
 }
 
 static int
@@ -42,7 +62,7 @@ get_tag(struct mpd_song *song, char *tag, enum mpd_tag_type type)
 }
 
 static int
-print_status(struct mpd_connection *conn)
+print_status(struct mpd_connection *conn, struct worker_meta *meta)
 {
 	struct mpd_status *status;
 	struct mpd_song *song;
@@ -57,6 +77,13 @@ print_status(struct mpd_connection *conn)
 		return handle_error(conn);
 
 	const enum mpd_state state = mpd_status_get_state(status);
+
+	if (state == MPD_STATE_STOP || state == MPD_STATE_UNKNOWN) {
+		// Early exit
+		printf("\n");
+		fflush(stdout);
+		return 0;
+	}
 
 	const bool repeat = mpd_status_get_repeat(status);
 	const bool random = mpd_status_get_random(status);
@@ -105,11 +132,38 @@ print_status(struct mpd_connection *conn)
 	if (random)
 		strcat(state_icon, " ");
 
-	if (state == MPD_STATE_PLAY || state == MPD_STATE_PAUSE)
-		printf("%s%s %s - %s (-%u:%02u) [%u/%u]\n",
-			play_icon, state_icon, artist, title,
-			remaining_mins, remaining_secs,
-			queue_pos+1, queue_length);
+	// the full song label. would be cool if this was customizable at runtime
+	char full_label[strlen(artist) + strlen(title) + 4];
+	sprintf(full_label, "%s - %s", artist, title);
+
+	// compare current label against previous update's label
+	if (strcmp(meta->label, full_label) != 0) {
+		// The song changed, reset scroll and update meta
+		meta->scroll_index = 0;
+		strcpy(meta->label, full_label);
+	}
+
+	// The label we'll actually print
+	char label[meta->scroll_length+1];
+	if (strlen(full_label) > meta->scroll_length) {
+		// If length of full label > meta->scroll_length, we'll scroll it
+
+		// Pad the text with a separator
+		char padded_text[strlen(full_label) + 3];
+		sprintf(padded_text, "%s | ", full_label);
+
+		scroll_text(padded_text, strlen(padded_text), label,
+			&meta->scroll_index, meta->scroll_length);
+	} else {
+		// Else we'll just print it out normally and reset the scroll index
+		meta->scroll_index = 0;
+		sprintf(label, "%s - %s", artist, title);
+	}
+
+	printf("%s%s %s (-%u:%02u) [%u/%u]\n",
+		play_icon, state_icon, label,
+		remaining_mins, remaining_secs,
+		queue_pos+1, queue_length);
 
 	fflush(stdout);
 
@@ -128,7 +182,10 @@ status_loop(void* worker_meta)
 		}
 
 		long long start = current_timestamp();
-		print_status(conn);
+		print_status(conn, meta);
+
+		meta->scroll_index++;
+
 		usleep((meta->update_interval - (current_timestamp() - start)) * 1000);
 	}
 
@@ -136,9 +193,8 @@ status_loop(void* worker_meta)
 	return NULL;
 }
 
-int main(void)
-{
-	struct worker_meta meta = {950, false};
+int main(void) {
+	struct worker_meta meta = {950, false, 30, 0, malloc(1024)};
 
 	pthread_t update_thread;
 	if(pthread_create(&update_thread, NULL, status_loop, &meta)) {
@@ -166,7 +222,7 @@ int main(void)
 				// ignore unrecognized input
 				continue;
 			}
-			print_status(conn);
+			print_status(conn, &meta);
 			mpd_connection_free(conn);
 		}
 	}
