@@ -41,13 +41,21 @@ scroll_text(const char *text_to_scroll, const size_t text_len, char *buffer,
 }
 
 static int
-handle_error(struct mpd_connection *c)
+handle_error(struct mpd_connection *conn, bool revive)
 {
-	assert(mpd_connection_get_error(c) != MPD_ERROR_SUCCESS);
+	if (mpd_connection_get_error(conn) != MPD_ERROR_SUCCESS) {
+		fprintf(stderr, "%s\n", mpd_connection_get_error_message(conn));
 
-	fprintf(stderr, "%s\n", mpd_connection_get_error_message(c));
-	mpd_connection_free(c);
-	return EXIT_FAILURE;
+		if (revive) {
+			if (!mpd_connection_clear_error(conn)) {
+				mpd_connection_free(conn);
+				conn = mpd_connection_new(NULL, 0, 0);
+			}
+		} else {
+			return EXIT_FAILURE;
+		}
+	}
+	return 0;
 }
 
 static void
@@ -67,7 +75,7 @@ print_status(struct mpd_connection *conn, struct worker_meta *meta)
 	struct mpd_status *status = mpd_run_status(conn);
 
 	if (status == NULL)
-		return handle_error(conn);
+		return handle_error(conn, false);
 
 	const enum mpd_state state = mpd_status_get_state(status);
 
@@ -104,8 +112,10 @@ print_status(struct mpd_connection *conn, struct worker_meta *meta)
 	const unsigned remaining_secs = remaining % 60;
 
 	mpd_status_free(status);
-	if (mpd_connection_get_error(conn) != MPD_ERROR_SUCCESS)
-		return handle_error(conn);
+
+	if (handle_error(conn, false)) {
+		return 1;
+	}
 
 	char artist[256];
 	char album[256];
@@ -117,8 +127,9 @@ print_status(struct mpd_connection *conn, struct worker_meta *meta)
 	get_tag(song, title, MPD_TAG_TITLE);
 
 	mpd_song_free(song);
-	if (mpd_connection_get_error(conn) != MPD_ERROR_SUCCESS)
-		return handle_error(conn);
+	if (handle_error(conn, false)) {
+		return 1;
+	}
 
 	// the full song label. would be cool if this was customizable at runtime
 	char full_label[strlen(artist) + strlen(title) + 4];
@@ -170,10 +181,8 @@ status_loop(void* worker_meta)
 	struct worker_meta *meta = (struct worker_meta*)worker_meta;
 	struct mpd_connection *conn = mpd_connection_new(NULL, 0, 0);
 
-	for (;;) {
-		if (meta->stop) {
-			break;
-		}
+	while (!meta->stop) {
+		handle_error(conn, true);
 
 		long long start = current_timestamp();
 		print_status(conn, meta);
@@ -192,8 +201,9 @@ enum click_command {
 };
 
 void
-mpd_run_command(struct worker_meta *meta, enum click_command command) {
-	struct mpd_connection *conn = mpd_connection_new(NULL, 0, 0);
+mpd_run_command(struct worker_meta *meta, struct mpd_connection *conn, enum click_command command) {
+	handle_error(conn, true);
+
 	switch (command) {
 		case TOGGLE_PAUSE:
 			mpd_run_toggle_pause(conn);
@@ -213,7 +223,6 @@ mpd_run_command(struct worker_meta *meta, enum click_command command) {
 
 	}
 	print_status(conn, meta);
-	mpd_connection_free(conn);
 }
 
 
@@ -226,26 +235,28 @@ int main(void) {
 		return 1;
 	}
 
-	for (;;) {
+	struct mpd_connection *conn = mpd_connection_new(NULL, 0, 0);
+	while (!meta.stop) {
 		char *line = NULL;
 		size_t size;
 
 		if (getline(&line, &size, stdin) != -1) {
 			if (strcmp(line, "1\n") == 0)	{
-				mpd_run_command(&meta, PREVIOUS);
+				mpd_run_command(&meta, conn, PREVIOUS);
 			} else if (strcmp(line, "2\n") == 0) {
-				mpd_run_command(&meta, TOGGLE_PAUSE);
+				mpd_run_command(&meta, conn,  TOGGLE_PAUSE);
 			} else if (strcmp(line, "3\n") == 0) {
-				mpd_run_command(&meta, NEXT);
+				mpd_run_command(&meta, conn, NEXT);
 			} else if (strcmp(line, "4\n") == 0) {
-				mpd_run_command(&meta, SEEK_FWD);
+				mpd_run_command(&meta, conn, SEEK_FWD);
 			} else if (strcmp(line, "5\n") == 0) {
-				mpd_run_command(&meta, SEEK_BCKWD);
+				mpd_run_command(&meta, conn, SEEK_BCKWD);
 			}
 
 			free(line);
 		}
 	}
+	mpd_connection_free(conn);
 
 	if(pthread_join(update_thread, NULL)) {
 		fprintf(stderr, "Error joining thread\n");
