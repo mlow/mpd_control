@@ -230,7 +230,7 @@ mpd_run_command(struct worker_meta *meta, enum click_command command) {
 
 
 int main(void) {
-	struct worker_meta meta = {950, false, 30, 3, 0, malloc(1024)};
+	struct worker_meta meta = {950, false, 25, 3, 0, malloc(1024)};
 
 	struct sigaction new_actn, old_actn;
 	new_actn.sa_handler = SIG_IGN;
