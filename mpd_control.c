@@ -25,7 +25,7 @@ current_timestamp() {
 }
 
 static void
-scroll_text(const char *text_to_scroll, const int text_len, char *buffer,
+scroll_text(const char *text_to_scroll, const size_t text_len, char *buffer,
 			int *index, const int max_length) {
 	if (*index - text_len > 0) *index %= text_len;
 
@@ -64,15 +64,8 @@ get_tag(struct mpd_song *song, char *tag, enum mpd_tag_type type)
 static int
 print_status(struct mpd_connection *conn, struct worker_meta *meta)
 {
-	struct mpd_status *status;
-	struct mpd_song *song;
+	struct mpd_status *status = mpd_run_status(conn);
 
-	mpd_command_list_begin(conn, true);
-	mpd_send_status(conn);
-	mpd_send_current_song(conn);
-	mpd_command_list_end(conn);
-
-	status = mpd_recv_status(conn);
 	if (status == NULL)
 		return handle_error(conn);
 
@@ -81,6 +74,7 @@ print_status(struct mpd_connection *conn, struct worker_meta *meta)
 	if (state == MPD_STATE_STOP || state == MPD_STATE_UNKNOWN) {
 		// Early exit
 		printf("\n");
+		mpd_status_free(status);
 		fflush(stdout);
 		return 0;
 	}
@@ -99,21 +93,17 @@ print_status(struct mpd_connection *conn, struct worker_meta *meta)
 	if (mpd_connection_get_error(conn) != MPD_ERROR_SUCCESS)
 		return handle_error(conn);
 
-	mpd_response_next(conn);
-
 	char artist[256];
 	char album[256];
 	char title[256];
 
-	while ((song = mpd_recv_song(conn)) != NULL) {
-		get_tag(song, artist, MPD_TAG_ARTIST);
-		get_tag(song, album, MPD_TAG_ALBUM);
-		get_tag(song, title, MPD_TAG_TITLE);
-		mpd_song_free(song);
-	}
+	struct mpd_song *song = mpd_run_current_song(conn);
+	get_tag(song, artist, MPD_TAG_ARTIST);
+	get_tag(song, album, MPD_TAG_ALBUM);
+	get_tag(song, title, MPD_TAG_TITLE);
 
-	if (mpd_connection_get_error(conn) != MPD_ERROR_SUCCESS ||
-		!mpd_response_finish(conn))
+	mpd_song_free(song);
+	if (mpd_connection_get_error(conn) != MPD_ERROR_SUCCESS)
 		return handle_error(conn);
 
 	char *play_icon;
