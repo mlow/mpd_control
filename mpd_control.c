@@ -88,10 +88,11 @@ print_status(struct mpd_connection *conn, struct worker_meta *meta)
 			play_icon = "";
 			break;
 		default:
+			meta->scroll_index = 0;
 			printf("\n");
 			mpd_status_free(status);
 			fflush(stdout);
-			return 0;
+			return 1;
 	}
 
 	const bool repeat = mpd_status_get_repeat(status);
@@ -161,7 +162,6 @@ print_status(struct mpd_connection *conn, struct worker_meta *meta)
 			&meta->scroll_index, meta->scroll_length);
 	} else {
 		// Else we'll just print it out normally and reset the scroll index
-		meta->scroll_index = 0;
 		sprintf(label, "%s - %s", artist, title);
 	}
 
@@ -185,9 +185,10 @@ status_loop(void* worker_meta)
 		handle_error(conn, true);
 
 		long long start = current_timestamp();
-		print_status(conn, meta);
 
-		meta->scroll_index++;
+		if (print_status(conn, meta) == 0) {
+			meta->scroll_index++;
+		}
 
 		usleep((meta->update_interval - (current_timestamp() - start)) * 1000);
 	}
