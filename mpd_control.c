@@ -13,6 +13,7 @@ struct worker_meta {
 	long long update_interval;
 	bool stop;
 	int scroll_length;
+	int scroll_step;
 	int scroll_index;
 	char* label;
 };
@@ -134,7 +135,7 @@ print_status(struct mpd_connection *conn, struct worker_meta *meta)
 
 	// the full song label. would be cool if this was customizable at runtime
 	char full_label[strlen(artist) + strlen(title) + 4];
-	sprintf(full_label, "%s - %s", artist, title);
+	sprintf(full_label, "%s - %s", title, artist);
 
 	// compare current label against previous update's label
 	if (strcmp(meta->label, full_label) != 0) {
@@ -161,8 +162,8 @@ print_status(struct mpd_connection *conn, struct worker_meta *meta)
 		scroll_text(padded_text, g_utf8_strlen(padded_text, -1), label,
 			&meta->scroll_index, meta->scroll_length);
 	} else {
-		// Else we'll just print it out normally and reset the scroll index
-		sprintf(label, "%s - %s", artist, title);
+		// Else we'll just use the full label
+		strcpy(label, full_label);
 	}
 
 	printf("%s%s %s (-%u:%02u) [%u/%u]\n",
@@ -185,7 +186,7 @@ status_loop(void* worker_meta)
 		long long start = current_timestamp();
 
 		if (handle_error(conn, true) == 0 && print_status(conn, meta) == 0) {
-			meta->scroll_index++;
+			meta->scroll_index += meta->scroll_step;
 		}
 
 		long long elapsed = current_timestamp() - start;
@@ -229,7 +230,7 @@ mpd_run_command(struct worker_meta *meta, enum click_command command) {
 
 
 int main(void) {
-	struct worker_meta meta = {950, false, 30, 0, malloc(1024)};
+	struct worker_meta meta = {950, false, 30, 3, 0, malloc(1024)};
 
 	struct sigaction new_actn, old_actn;
 	new_actn.sa_handler = SIG_IGN;
