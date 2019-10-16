@@ -41,13 +41,24 @@ scroll_text(const char *text_to_scroll, const size_t text_len, char *buffer,
 }
 
 static int
-handle_error(struct mpd_connection *c)
+handle_error(struct mpd_connection *conn, bool renew)
 {
-	assert(mpd_connection_get_error(c) != MPD_ERROR_SUCCESS);
-
-	fprintf(stderr, "%s\n", mpd_connection_get_error_message(c));
-	mpd_connection_free(c);
-	return EXIT_FAILURE;
+	if (mpd_connection_get_error(conn) != MPD_ERROR_SUCCESS) {
+		if (!renew) {
+			fprintf(stderr, "%s\n", mpd_connection_get_error_message(conn));
+		}
+		if (!mpd_connection_clear_error(conn)) {
+			if (renew) {
+				mpd_connection_free(conn);
+				conn = mpd_connection_new(NULL, 0, 0);
+				return handle_error(conn, false);
+			}
+			return EXIT_FAILURE;
+		} else {
+			return 0;
+		}
+	}
+	return 0;
 }
 
 static void
@@ -67,7 +78,7 @@ print_status(struct mpd_connection *conn, struct worker_meta *meta)
 	struct mpd_status *status = mpd_run_status(conn);
 
 	if (status == NULL)
-		return handle_error(conn);
+		return handle_error(conn, false);
 
 	const enum mpd_state state = mpd_status_get_state(status);
 
@@ -106,7 +117,7 @@ print_status(struct mpd_connection *conn, struct worker_meta *meta)
 
 	mpd_status_free(status);
 	if (mpd_connection_get_error(conn) != MPD_ERROR_SUCCESS)
-		return handle_error(conn);
+		return handle_error(conn, false);
 
 	char artist[256];
 	char album[256];
@@ -119,7 +130,7 @@ print_status(struct mpd_connection *conn, struct worker_meta *meta)
 
 	mpd_song_free(song);
 	if (mpd_connection_get_error(conn) != MPD_ERROR_SUCCESS)
-		return handle_error(conn);
+		return handle_error(conn, false);
 
 	// the full song label. would be cool if this was customizable at runtime
 	char full_label[strlen(artist) + strlen(title) + 4];
@@ -170,18 +181,17 @@ status_loop(void* worker_meta)
 	struct worker_meta *meta = (struct worker_meta*)worker_meta;
 	struct mpd_connection *conn = mpd_connection_new(NULL, 0, 0);
 
-	for (;;) {
-		if (meta->stop) {
-			break;
-		}
-
+	while (!meta->stop) {
 		long long start = current_timestamp();
 
-		if (print_status(conn, meta) == 0) {
+		if (handle_error(conn, true) == 0 && print_status(conn, meta) == 0) {
 			meta->scroll_index++;
 		}
 
-		usleep((meta->update_interval - (current_timestamp() - start)) * 1000);
+		long long elapsed = current_timestamp() - start;
+		if (meta->update_interval - elapsed >= 0) {
+			usleep((meta->update_interval - elapsed) * 1000);
+		}
 	}
 
 	mpd_connection_free(conn);
@@ -220,6 +230,12 @@ mpd_run_command(struct worker_meta *meta, enum click_command command) {
 
 int main(void) {
 	struct worker_meta meta = {950, false, 30, 0, malloc(1024)};
+
+	struct sigaction new_actn, old_actn;
+	new_actn.sa_handler = SIG_IGN;
+	sigemptyset(&new_actn.sa_mask);
+	new_actn.sa_flags = 0;
+	sigaction(SIGPIPE, &new_actn, &old_actn);
 
 	pthread_t update_thread;
 	if(pthread_create(&update_thread, NULL, status_loop, &meta)) {
