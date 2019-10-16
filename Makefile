@@ -7,4 +7,5 @@ mpd_control: $(OBJECTS)
 	$(CC) $(CFLAGS) $^ $(LDLIBS) -o $@
 
 clean:
-	rm $(OBJECTS) mpd_control
+	rm $(OBJECTS)
+	rm mpd_control
