@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include <glib.h>
 
 struct worker_meta {
 	long long update_interval;
@@ -24,20 +25,19 @@ current_timestamp() {
 }
 
 static void
-scroll_text(char *text_to_scroll, int text_len, char *buffer, int *index,
-			const int max_length) {
-    if (*index - text_len > 0)
-        *index %= text_len;
+scroll_text(const char *text_to_scroll, const int text_len, char *buffer,
+			int *index, const int max_length) {
+	if (*index - text_len > 0) *index %= text_len;
 
-    const int overflow = text_len - *index - max_length;
-    if (overflow <= 0) {
-        memcpy(buffer, &text_to_scroll[*index], text_len-*index);
-        memcpy(&buffer[text_len-*index], text_to_scroll, max_length-(text_len-*index));
-    } else {
-        memcpy(buffer, &text_to_scroll[*index], max_length);
-    }
-
-	buffer[max_length] = '\0';
+	char* first_char = g_utf8_offset_to_pointer(text_to_scroll, *index);
+	const int overflow = text_len - *index - max_length;
+	if (overflow <= 0) {
+		g_utf8_strncpy(buffer, first_char, text_len-*index);
+		g_utf8_strncpy(g_utf8_offset_to_pointer(buffer, text_len-*index),
+			text_to_scroll, max_length-(text_len-*index));
+	} else {
+		g_utf8_strncpy(buffer, first_char, max_length);
+	}
 }
 
 static int
@@ -144,15 +144,21 @@ print_status(struct mpd_connection *conn, struct worker_meta *meta)
 	}
 
 	// The label we'll actually print
-	char label[meta->scroll_length+1];
-	if (strlen(full_label) > meta->scroll_length) {
+	// Allocate scroll_length * 4 chars(bytes) since each UTF-8 character may
+	// consume up to 4 bytes.
+	char label[(meta->scroll_length*4)+1];
+	strncpy(label, "", sizeof(label));
+
+	if (g_utf8_strlen(full_label, -1) > meta->scroll_length) {
 		// If length of full label > meta->scroll_length, we'll scroll it
 
 		// Pad the text with a separator
-		char padded_text[strlen(full_label) + 3];
+		char padded_text[strlen(full_label) + 3 + 1];
+		padded_text[sizeof(padded_text)-1] = '\0';
+
 		sprintf(padded_text, "%s | ", full_label);
 
-		scroll_text(padded_text, strlen(padded_text), label,
+		scroll_text(padded_text, g_utf8_strlen(padded_text, -1), label,
 			&meta->scroll_index, meta->scroll_length);
 	} else {
 		// Else we'll just print it out normally and reset the scroll index
