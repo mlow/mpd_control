@@ -199,6 +199,36 @@ status_loop(void* worker_meta)
 	return NULL;
 }
 
+enum click_command {
+	TOGGLE_PAUSE, NEXT, PREVIOUS, SEEK_FWD, SEEK_BCKWD
+};
+
+void
+mpd_run_command(struct worker_meta *meta, enum click_command command) {
+	struct mpd_connection *conn = mpd_connection_new(NULL, 0, 0);
+	switch (command) {
+		case TOGGLE_PAUSE:
+			mpd_run_toggle_pause(conn);
+			break;
+		case NEXT:
+			mpd_run_next(conn);
+			break;
+		case PREVIOUS:
+			mpd_run_previous(conn);
+			break;
+		case SEEK_FWD:
+			mpd_run_seek_current(conn, 3, true);
+			break;
+		case SEEK_BCKWD:
+			mpd_run_seek_current(conn, -3, true);
+			break;
+
+	}
+	print_status(conn, meta);
+	mpd_connection_free(conn);
+}
+
+
 int main(void) {
 	struct worker_meta meta = {950, false, 30, 0, malloc(1024)};
 
@@ -209,27 +239,23 @@ int main(void) {
 	}
 
 	for (;;) {
-		char *line;
+		char *line = NULL;
 		size_t size;
 
 		if (getline(&line, &size, stdin) != -1) {
-			struct mpd_connection *conn = mpd_connection_new(NULL, 0, 0);
 			if (strcmp(line, "1\n") == 0)	{
-				mpd_run_previous(conn);
+				mpd_run_command(&meta, PREVIOUS);
 			} else if (strcmp(line, "2\n") == 0) {
-				mpd_run_toggle_pause(conn);
+				mpd_run_command(&meta, TOGGLE_PAUSE);
 			} else if (strcmp(line, "3\n") == 0) {
-				mpd_run_next(conn);
+				mpd_run_command(&meta, NEXT);
 			} else if (strcmp(line, "4\n") == 0) {
-				mpd_run_seek_current(conn, 3, true);
+				mpd_run_command(&meta, SEEK_FWD);
 			} else if (strcmp(line, "5\n") == 0) {
-				mpd_run_seek_current(conn, -3, true);
-			} else {
-				// ignore unrecognized input
-				continue;
+				mpd_run_command(&meta, SEEK_BCKWD);
 			}
-			print_status(conn, &meta);
-			mpd_connection_free(conn);
+
+			free(line);
 		}
 	}
 
