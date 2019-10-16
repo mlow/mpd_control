@@ -71,16 +71,30 @@ print_status(struct mpd_connection *conn, struct worker_meta *meta)
 
 	const enum mpd_state state = mpd_status_get_state(status);
 
-	if (state == MPD_STATE_STOP || state == MPD_STATE_UNKNOWN) {
-		// Early exit
-		printf("\n");
-		mpd_status_free(status);
-		fflush(stdout);
-		return 0;
+	char *play_icon = NULL;
+	switch (state) {
+		case MPD_STATE_PLAY:
+			play_icon = "";
+			break;
+		case MPD_STATE_PAUSE:
+			play_icon = "";
+			break;
+		default:
+			printf("\n");
+			mpd_status_free(status);
+			fflush(stdout);
+			return 0;
 	}
 
 	const bool repeat = mpd_status_get_repeat(status);
 	const bool random = mpd_status_get_random(status);
+
+	char state_icon[16];
+	strcpy(state_icon, "");
+	if (repeat)
+		strcat(state_icon, " ");
+	if (random)
+		strcat(state_icon, " ");
 
 	const unsigned queue_pos = mpd_status_get_song_pos(status);
 	const unsigned queue_length = mpd_status_get_queue_length(status);
@@ -105,22 +119,6 @@ print_status(struct mpd_connection *conn, struct worker_meta *meta)
 	mpd_song_free(song);
 	if (mpd_connection_get_error(conn) != MPD_ERROR_SUCCESS)
 		return handle_error(conn);
-
-	char *play_icon;
-	if (state == MPD_STATE_PLAY) {
-		play_icon = "";
-	} else if (state == MPD_STATE_PAUSE) {
-		play_icon = "";
-	} else {
-		play_icon = "";
-	}
-
-	char state_icon[16];
-	strcpy(state_icon, "");
-	if (repeat)
-		strcat(state_icon, " ");
-	if (random)
-		strcat(state_icon, " ");
 
 	// the full song label. would be cool if this was customizable at runtime
 	char full_label[strlen(artist) + strlen(title) + 4];
