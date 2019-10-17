@@ -18,6 +18,7 @@ static struct argp_option options[] = {
 	{ "interval", 'i', "interval", 0, "How frequently to update the status line (in seconds). Default: 1"},
 	{ "length", 'l', "length", 0, "The length of the shown song label (in characters). Default: 25"},
 	{ "step", 's', "step", 0, "How many characters to step the label while scrolling. Default: 3"},
+	{ "padding", 'p', "padding", 0, "The characters to append to the label while scrolling. Default: \" | \""},
 	{ 0 }
 };
 
@@ -25,6 +26,7 @@ struct arguments {
 	float interval;
 	int length;
 	int step;
+	char* padding;
 };
 static struct arguments arguments;
 
@@ -55,6 +57,7 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
 				return EINVAL;
 			}
 			arguments->step = s; break;
+		case 'p': arguments->padding = arg;
 		case ARGP_KEY_ARG: return 0;
 		default: return ARGP_ERR_UNKNOWN;
     }
@@ -200,7 +203,7 @@ print_status(struct mpd_connection *conn, struct worker_state *state)
 
 		// ... and the padded label (if the full label is long enough) ...
 		if (state->full_label_length > arguments.length) {
-			sprintf(state->padded_label, "%s | ", state->full_label);
+			sprintf(state->padded_label, "%s%s", state->full_label, arguments.padding);
 			state->padded_label_length = g_utf8_strlen(state->padded_label, -1);
 		}
 		// ... and reset the scroll index
@@ -293,6 +296,7 @@ int main(int argc, char *argv[]) {
 	arguments.interval = 1.0f;
 	arguments.length = 25;
 	arguments.step = 3;
+	arguments.padding = " | ";
 
 	argp_parse(&argp, argc, argv, 0, 0, &arguments);
 
