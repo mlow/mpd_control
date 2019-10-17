@@ -8,14 +8,70 @@
 #include <sys/time.h>
 #include <unistd.h>
 #include <glib.h>
+#include <argp.h>
 
-struct worker_meta {
-	long long update_interval;
-	bool stop;
-	int scroll_length;
-	int scroll_step;
+const char *argp_program_version = "mpd_control 0.3.0";
+const char *argp_program_bug_address = "<matt-low@zusmail.xyz>";
+static char doc[] = "MPD blocket for i3blocks.";
+static char args_doc[] = "[OPTION]...";
+static struct argp_option options[] = {
+	{ "interval", 'i', "interval", 0, "How frequently to update the status line (in seconds). Default: 1"},
+	{ "length", 'l', "length", 0, "The length of the shown song label (in characters). Default: 25"},
+	{ "step", 's', "step", 0, "How many characters to step the label while scrolling. Default: 3"},
+	{ 0 }
+};
+
+struct arguments {
+	float interval;
+	int length;
+	int step;
+};
+static struct arguments arguments;
+
+
+static error_t parse_opt(int key, char *arg, struct argp_state *state) {
+    struct arguments *arguments = state->input;
+    switch (key) {
+		case 'i':
+			if (!arg) break;
+			float i = strtof(arg, NULL);
+			if (!i || i < 0) {
+				return EINVAL;
+			}
+			arguments->interval = i;
+			break;
+		case 'l':
+			if (!arg) break;
+			long l = strtol(arg, NULL, 10);
+			if (!l || l < 0) {
+				return EINVAL;
+			}
+			arguments->length = l;
+			break;
+		case 's':
+			if (!arg) break;
+			long s = strtol(arg, NULL, 10);
+			if (!s || s < 0) {
+				return EINVAL;
+			}
+			arguments->step = s; break;
+		case ARGP_KEY_ARG: return 0;
+		default: return ARGP_ERR_UNKNOWN;
+    }
+    return 0;
+}
+
+static struct argp argp = { options, parse_opt, args_doc, doc, 0, 0, 0 };
+
+struct worker_state {
 	int scroll_index;
-	char* label;
+	char* artist;
+	char* album;
+	char* title;
+	char* full_label;
+	size_t full_label_length;
+	char* padded_label;
+	size_t padded_label_length;
 };
 
 static long long
@@ -74,17 +130,15 @@ get_tag(struct mpd_song *song, char *tag, enum mpd_tag_type type)
 }
 
 static int
-print_status(struct mpd_connection *conn, struct worker_meta *meta)
+print_status(struct mpd_connection *conn, struct worker_state *state)
 {
 	struct mpd_status *status = mpd_run_status(conn);
 
 	if (status == NULL)
 		return handle_error(conn, false);
 
-	const enum mpd_state state = mpd_status_get_state(status);
-
 	char *play_icon = NULL;
-	switch (state) {
+	switch (mpd_status_get_state(status)) {
 		case MPD_STATE_PLAY:
 			play_icon = "";
 			break;
@@ -92,7 +146,7 @@ print_status(struct mpd_connection *conn, struct worker_meta *meta)
 			play_icon = "";
 			break;
 		default:
-			meta->scroll_index = 0;
+			state->scroll_index = 0;
 			printf("\n");
 			mpd_status_free(status);
 			fflush(stdout);
@@ -133,37 +187,42 @@ print_status(struct mpd_connection *conn, struct worker_meta *meta)
 	if (mpd_connection_get_error(conn) != MPD_ERROR_SUCCESS)
 		return handle_error(conn, false);
 
-	// the full song label. would be cool if this was customizable at runtime
-	char full_label[strlen(artist) + strlen(title) + 4];
-	sprintf(full_label, "%s - %s", title, artist);
+	if (strcmp(state->title, title) != 0
+			|| strcmp(state->album, album) != 0
+			|| strcmp(state->artist, artist) != 0) {
+		strcpy(state->title, title);
+		strcpy(state->album, album);
+		strcpy(state->artist, artist);
 
-	// compare current label against previous update's label
-	if (strcmp(meta->label, full_label) != 0) {
-		// The song changed, reset scroll and update meta
-		meta->scroll_index = 0;
-		strcpy(meta->label, full_label);
+		// The song changed, so let's update the full label...
+		sprintf(state->full_label, "%s - %s", title, artist);
+		state->full_label_length = g_utf8_strlen(state->full_label, -1);
+
+		// ... and the padded label (if the full label is long enough) ...
+		if (state->full_label_length > arguments.length) {
+			sprintf(state->padded_label, "%s | ", state->full_label);
+			state->padded_label_length = g_utf8_strlen(state->padded_label, -1);
+		}
+		// ... and reset the scroll index
+		state->scroll_index = 0;
 	}
 
 	// The label we'll actually print
-	// Allocate scroll_length * 4 chars(bytes) since each UTF-8 character may
-	// consume up to 4 bytes.
-	char label[(meta->scroll_length*4)+1];
-	strncpy(label, "", sizeof(label));
+	char *label = NULL;
 
-	if (g_utf8_strlen(full_label, -1) > meta->scroll_length) {
-		// If length of full label > meta->scroll_length, we'll scroll it
+	if (state->full_label_length > arguments.length) {
+		// If length of full label > scroll length, we'll scroll it
 
-		// Pad the text with a separator
-		char padded_text[strlen(full_label) + 3 + 1];
-		padded_text[sizeof(padded_text)-1] = '\0';
+		// Allocate enough space for the buffer
+		// Up to 4 bytes per character because utf8.
+		label = alloca((arguments.length*4)+1);
+		label[0] = '\0';
 
-		sprintf(padded_text, "%s | ", full_label);
-
-		scroll_text(padded_text, g_utf8_strlen(padded_text, -1), label,
-			&meta->scroll_index, meta->scroll_length);
+		scroll_text(state->padded_label, state->padded_label_length, label,
+			&state->scroll_index, arguments.length);
 	} else {
-		// Else we'll just use the full label
-		strcpy(label, full_label);
+		// Else we'll just point label directly to the full label
+		label = state->full_label;
 	}
 
 	printf("%s%s %s (-%u:%02u) [%u/%u]\n",
@@ -176,23 +235,26 @@ print_status(struct mpd_connection *conn, struct worker_meta *meta)
 	return 0;
 }
 
+static inline
+long long max(int a, int b) {
+	return a >= b? a : b;
+}
+
 void*
-status_loop(void* worker_meta)
+status_loop(void* worker_state)
 {
-	struct worker_meta *meta = (struct worker_meta*)worker_meta;
+	struct worker_state *state = (struct worker_state*)worker_state;
 	struct mpd_connection *conn = mpd_connection_new(NULL, 0, 0);
 
-	while (!meta->stop) {
+	for (;;) {
 		long long start = current_timestamp();
 
-		if (handle_error(conn, true) == 0 && print_status(conn, meta) == 0) {
-			meta->scroll_index += meta->scroll_step;
+		if (handle_error(conn, true) == 0 && print_status(conn, state) == 0) {
+			state->scroll_index += arguments.step;
 		}
 
 		long long elapsed = current_timestamp() - start;
-		if (meta->update_interval - elapsed >= 0) {
-			usleep((meta->update_interval - elapsed) * 1000);
-		}
+		usleep(max(0, ((arguments.interval*1000) - elapsed) * 1000));
 	}
 
 	mpd_connection_free(conn);
@@ -204,7 +266,7 @@ enum click_command {
 };
 
 void
-mpd_run_command(struct worker_meta *meta, enum click_command command) {
+mpd_run_command(struct worker_state *state, enum click_command command) {
 	struct mpd_connection *conn = mpd_connection_new(NULL, 0, 0);
 	switch (command) {
 		case TOGGLE_PAUSE:
@@ -222,15 +284,20 @@ mpd_run_command(struct worker_meta *meta, enum click_command command) {
 		case SEEK_BCKWD:
 			mpd_run_seek_current(conn, -3, true);
 			break;
-
 	}
-	print_status(conn, meta);
+	print_status(conn, state);
 	mpd_connection_free(conn);
 }
 
+int main(int argc, char *argv[]) {
+	arguments.interval = 1.0f;
+	arguments.length = 25;
+	arguments.step = 3;
 
-int main(void) {
-	struct worker_meta meta = {950, false, 25, 3, 0, malloc(1024)};
+	argp_parse(&argp, argc, argv, 0, 0, &arguments);
+
+	struct worker_state state = {0, malloc(256), malloc(256), malloc(256),
+		malloc(1024), 0, malloc(1024), 0};
 
 	struct sigaction new_actn, old_actn;
 	new_actn.sa_handler = SIG_IGN;
@@ -239,7 +306,7 @@ int main(void) {
 	sigaction(SIGPIPE, &new_actn, &old_actn);
 
 	pthread_t update_thread;
-	if(pthread_create(&update_thread, NULL, status_loop, &meta)) {
+	if(pthread_create(&update_thread, NULL, status_loop, &state)) {
 		fprintf(stderr, "Error creating thread\n");
 		return 1;
 	}
@@ -250,15 +317,15 @@ int main(void) {
 
 		if (getline(&line, &size, stdin) != -1) {
 			if (strcmp(line, "1\n") == 0)	{
-				mpd_run_command(&meta, PREVIOUS);
+				mpd_run_command(&state, PREVIOUS);
 			} else if (strcmp(line, "2\n") == 0) {
-				mpd_run_command(&meta, TOGGLE_PAUSE);
+				mpd_run_command(&state, TOGGLE_PAUSE);
 			} else if (strcmp(line, "3\n") == 0) {
-				mpd_run_command(&meta, NEXT);
+				mpd_run_command(&state, NEXT);
 			} else if (strcmp(line, "4\n") == 0) {
-				mpd_run_command(&meta, SEEK_FWD);
+				mpd_run_command(&state, SEEK_FWD);
 			} else if (strcmp(line, "5\n") == 0) {
-				mpd_run_command(&meta, SEEK_BCKWD);
+				mpd_run_command(&state, SEEK_BCKWD);
 			}
 
 			free(line);
