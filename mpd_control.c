@@ -68,9 +68,7 @@ static struct argp argp = { options, parse_opt, args_doc, doc, 0, 0, 0 };
 
 struct worker_state {
 	int scroll_index;
-	char* artist;
-	char* album;
-	char* title;
+	int song_id;
 	char* full_label;
 	size_t full_label_length;
 	char* padded_label;
@@ -150,6 +148,7 @@ print_status(struct mpd_connection *conn, struct worker_state *state)
 			break;
 		default:
 			state->scroll_index = 0;
+			state->song_id = -1;
 			printf("\n");
 			mpd_status_free(status);
 			fflush(stdout);
@@ -172,30 +171,26 @@ print_status(struct mpd_connection *conn, struct worker_state *state)
 	const unsigned remaining = mpd_status_get_total_time(status) - elapsed;
 	const unsigned remaining_mins = remaining / 60;
 	const unsigned remaining_secs = remaining % 60;
+	const int song_id = mpd_status_get_song_id(status);
 
 	mpd_status_free(status);
 	if (mpd_connection_get_error(conn) != MPD_ERROR_SUCCESS)
 		return handle_error(conn, false);
 
-	char artist[256];
-	char album[256];
-	char title[256];
+	if (song_id != state->song_id) {
+		state->song_id = song_id;
 
-	struct mpd_song *song = mpd_run_current_song(conn);
-	get_tag(song, artist, MPD_TAG_ARTIST);
-	get_tag(song, album, MPD_TAG_ALBUM);
-	get_tag(song, title, MPD_TAG_TITLE);
+		char artist[256];
+		char album[256];
+		char title[256];
 
-	mpd_song_free(song);
-	if (mpd_connection_get_error(conn) != MPD_ERROR_SUCCESS)
-		return handle_error(conn, false);
-
-	if (strcmp(state->title, title) != 0
-			|| strcmp(state->album, album) != 0
-			|| strcmp(state->artist, artist) != 0) {
-		strcpy(state->title, title);
-		strcpy(state->album, album);
-		strcpy(state->artist, artist);
+		struct mpd_song *song = mpd_run_current_song(conn);
+		get_tag(song, artist, MPD_TAG_ARTIST);
+		get_tag(song, album, MPD_TAG_ALBUM);
+		get_tag(song, title, MPD_TAG_TITLE);
+		mpd_song_free(song);
+		if (mpd_connection_get_error(conn) != MPD_ERROR_SUCCESS)
+			return handle_error(conn, false);
 
 		// The song changed, so let's update the full label...
 		sprintf(state->full_label, "%s - %s", title, artist);
@@ -300,8 +295,7 @@ int main(int argc, char *argv[]) {
 
 	argp_parse(&argp, argc, argv, 0, 0, &arguments);
 
-	struct worker_state state = {0, malloc(256), malloc(256), malloc(256),
-		malloc(1024), 0, malloc(1024), 0};
+	struct worker_state state = {0, -1, malloc(1024), 0, malloc(1024), 0};
 
 	struct sigaction new_actn, old_actn;
 	new_actn.sa_handler = SIG_IGN;
