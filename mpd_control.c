@@ -19,6 +19,7 @@ static struct argp_option options[] = {
 	{ "length", 'l', "length", 0, "The length of the shown song label (in characters). Default: 25"},
 	{ "step", 's', "step", 0, "How many characters to step the label while scrolling. Default: 3"},
 	{ "padding", 'p', "padding", 0, "The characters to append to the label while scrolling. Default: \" | \""},
+	{ "format", 'f', "format", 0, "The song label format. Default: '{title} - {artist}'"},
 	{ 0 }
 };
 
@@ -27,6 +28,7 @@ struct arguments {
 	int length;
 	int step;
 	char* padding;
+	char* format;
 };
 static struct arguments arguments;
 
@@ -58,6 +60,7 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
 			}
 			arguments->step = s; break;
 		case 'p': arguments->padding = arg;
+		case 'f': arguments->format = arg;
 		case ARGP_KEY_ARG: return 0;
 		default: return ARGP_ERR_UNKNOWN;
     }
@@ -80,6 +83,26 @@ current_timestamp() {
 	struct timeval te;
 	gettimeofday(&te, NULL);
 	return te.tv_sec*1000LL + te.tv_usec/1000;
+}
+
+static void
+str_replace(char *target, size_t target_len, const char *needle, const char *replace)
+{
+	if (target_len == -1) target_len = strlen(target);
+
+	char *end = &target[target_len];
+	size_t needle_len = strlen(needle);
+	size_t replace_len = strlen(replace);
+
+	char *pos;
+	while ((pos = strstr(target, needle)) != NULL) {
+		// Shift portion after needle to its position after replace
+		memmove(pos + replace_len, pos + needle_len, (end - (pos + needle_len)) + 1);
+		end += replace_len - needle_len;
+
+		// Replace needle with repl string
+		memcpy(pos, replace, replace_len);
+	}
 }
 
 static void
@@ -193,7 +216,11 @@ print_status(struct mpd_connection *conn, struct worker_state *state)
 			return handle_error(conn, false);
 
 		// The song changed, so let's update the full label...
-		sprintf(state->full_label, "%s - %s", title, artist);
+		state->full_label = strcpy(state->full_label, arguments.format);
+		str_replace(state->full_label, -1, "{title}", title);
+		str_replace(state->full_label, -1, "{album}", album);
+		str_replace(state->full_label, -1, "{artist}", artist);
+
 		state->full_label_length = g_utf8_strlen(state->full_label, -1);
 
 		// ... and the padded label (if the full label is long enough) ...
@@ -292,6 +319,7 @@ int main(int argc, char *argv[]) {
 	arguments.length = 25;
 	arguments.step = 3;
 	arguments.padding = " | ";
+	arguments.format = "{title} - {artist}";
 
 	argp_parse(&argp, argc, argv, 0, 0, &arguments);
 
