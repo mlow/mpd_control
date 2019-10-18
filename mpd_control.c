@@ -23,17 +23,27 @@ static struct argp_option options[] = {
 	{ 0 }
 };
 
-struct arguments {
+struct arguments
+{
 	float interval;
 	int length;
 	int step;
 	char* padding;
 	char* format;
 };
-static struct arguments arguments;
+static struct arguments arguments =
+{
+	.interval 	= 1.0f,
+	.length 	= 25,
+	.step 		= 3,
+	.padding 	= " | ",
+	.format 	= "{title} - {artist}",
+};
 
 
-static error_t parse_opt(int key, char *arg, struct argp_state *state) {
+static error_t
+parse_opt(int key, char *arg, struct argp_state *state)
+{
     struct arguments *arguments = state->input;
     switch (key) {
 		case 'i':
@@ -69,7 +79,8 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
 
 static struct argp argp = { options, parse_opt, args_doc, doc, 0, 0, 0 };
 
-struct worker_state {
+struct worker_state
+{
 	int scroll_index;
 	int song_id;
 	char* full_label;
@@ -79,14 +90,16 @@ struct worker_state {
 };
 
 static long long
-current_timestamp() {
+current_timestamp()
+{
 	struct timeval te;
 	gettimeofday(&te, NULL);
 	return te.tv_sec*1000LL + te.tv_usec/1000;
 }
 
 static void
-str_replace(char *target, size_t target_len, const char *needle, const char *replace)
+str_replace(char *target, size_t target_len, const char *needle,
+			const char *replace)
 {
 	if (target_len == -1) target_len = strlen(target);
 
@@ -107,7 +120,8 @@ str_replace(char *target, size_t target_len, const char *needle, const char *rep
 
 static void
 scroll_text(const char *text_to_scroll, const size_t text_len, char *buffer,
-			int *index, const int max_length) {
+			int *index, const int max_length)
+{
 	if (*index - text_len > 0) *index %= text_len;
 
 	char* first_char = g_utf8_offset_to_pointer(text_to_scroll, *index);
@@ -261,7 +275,8 @@ print_status(struct mpd_connection *conn, struct worker_state *state)
 }
 
 static inline
-long long max(int a, int b) {
+long long max(int a, int b)
+{
 	return a >= b? a : b;
 }
 
@@ -291,7 +306,8 @@ enum click_command {
 };
 
 void
-mpd_run_command(struct worker_state *state, enum click_command command) {
+mpd_run_command(struct worker_state *state, enum click_command command)
+{
 	struct mpd_connection *conn = mpd_connection_new(NULL, 0, 0);
 	switch (command) {
 		case TOGGLE_PAUSE:
@@ -314,13 +330,8 @@ mpd_run_command(struct worker_state *state, enum click_command command) {
 	mpd_connection_free(conn);
 }
 
-int main(int argc, char *argv[]) {
-	arguments.interval = 1.0f;
-	arguments.length = 25;
-	arguments.step = 3;
-	arguments.padding = " | ";
-	arguments.format = "{title} - {artist}";
-
+int main(int argc, char *argv[])
+{
 	argp_parse(&argp, argc, argv, 0, 0, &arguments);
 
 	struct worker_state state = {0, -1, malloc(1024), 0, malloc(1024), 0};
@@ -332,7 +343,7 @@ int main(int argc, char *argv[]) {
 	sigaction(SIGPIPE, &new_actn, &old_actn);
 
 	pthread_t update_thread;
-	if(pthread_create(&update_thread, NULL, status_loop, &state)) {
+	if (pthread_create(&update_thread, NULL, status_loop, &state)) {
 		fprintf(stderr, "Error creating thread\n");
 		return 1;
 	}
@@ -358,7 +369,7 @@ int main(int argc, char *argv[]) {
 		}
 	}
 
-	if(pthread_join(update_thread, NULL)) {
+	if (pthread_join(update_thread, NULL)) {
 		fprintf(stderr, "Error joining thread\n");
 		return 2;
 	}
